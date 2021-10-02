@@ -29,8 +29,18 @@ def read_rgb_f32(path_to_sequence: str) -> pims.FramesSequence:
         return _to_float32(pims.open(path_to_sequence))
 
 
+def my_read_rgb(path_to_sequence: str) -> pims.FramesSequence:
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        return pims.open(path_to_sequence)
+
+
 def read_grayscale_f32(path_to_sequence: str) -> pims.FramesSequence:
     return _to_grayscale(read_rgb_f32(path_to_sequence))
+
+
+def my_read_grayscale(path_to_sequence: str) -> pims.FramesSequence:
+    return _to_grayscale(my_read_rgb(path_to_sequence))
 
 
 @click.command()

@@ -268,7 +268,7 @@ def create_cli(build):
         FRAME_SEQUENCE path to a video file or shell-like wildcard describing
         multiple images
         """
-        sequence = frameseq.read_grayscale_f32(frame_sequence)
+        sequence = frameseq.my_read_grayscale(frame_sequence)
         if file_to_load is not None:
             corner_storage = load(file_to_load)
         else:
@@ -282,7 +282,7 @@ def create_cli(build):
             )
             frame = 0
             while True:
-                grayscale = sequence[frame]
+                grayscale = frameseq._to_float32(sequence[frame])
                 bgr = draw(grayscale, corner_storage[frame])
                 cv2.imshow('Frame', bgr)
                 key = chr(cv2.waitKey(20) & 0xFF)
