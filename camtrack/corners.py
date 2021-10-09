@@ -47,33 +47,51 @@ class _CornerStorageBuilder:
         return StorageImpl(item[1] for item in sorted(self._corners.items()))
 
 
-def remove_close_corners_new(cs_flow, cs_new, radius):
+def remove_close_corners_flow(bool_field, mask, cs_flow, shape, radius):
+    for i, p1 in enumerate(cs_flow):
+        x, y = (int(np.round(p1[0][0])), np.round(int(p1[0][1])))
+        if not bool_field[x][y]:
+            mask[i] = False
+            continue
+        if i != len(cs_flow) - 1:
+            mark_area(x, y, bool_field, shape, radius)
+
+
+def do_remove_close_corners_flow(bool_field, cs_flow, ids, shape, radius):
+    bool_field.fill(True)
+    mask = np.ones_like(ids, dtype=bool)
+    remove_close_corners_flow(bool_field, mask, cs_flow, shape, radius=radius)
+    return cs_flow[mask], ids[mask]
+
+
+def remove_close_corners_new(bool_field, mask, cs_flow, cs_new, shape, radius):
     for p1 in cs_flow:
-        for i, p2 in enumerate(cs_new):
-            if np.abs(p1[0][0] - p2[0][0]) + np.abs(p1[0][1] - p2[0][1]) <= radius:
-                cs_new[i] = np.nan
+        x, y = (int(np.round(p1[0][0])), np.round(int(p1[0][1])))
+        mark_area(x, y, bool_field, shape, radius)
+
+    for i, p1 in enumerate(cs_new):
+        x, y = (int(np.round(p1[0][0])), np.round(int(p1[0][1])))
+        if not bool_field[x][y]:
+            mask[i] = False
 
 
-def do_remove_close_corners_new(cs_flow, cs_new, radius):
-    remove_close_corners_new(cs_flow, cs_new, radius)
-    return cs_new[~np.isnan(cs_new)].reshape(-1, 1, 2)
+def do_remove_close_corners_new(bool_field, cs_flow, cs_new, shape, radius):
+    bool_field.fill(True)
+    mask = np.ones(cs_new.shape[0], dtype=bool)
+    remove_close_corners_new(bool_field, mask, cs_flow, cs_new, shape, radius=radius)
+    return cs_new[mask]
 
 
-def remove_close_corners_flow(cs_flow, ids, radius):
-    for i, p1 in enumerate(cs_flow[:-1]):
-        for j, p2 in enumerate(cs_flow[i + 1:]):
-            if np.abs(p1[0][0] - p2[0][0]) + np.abs(p1[0][1] - p2[0][1]) <= radius:
-                cs_flow[j] = np.nan
-                ids[j] = -1
+def mark_area(x, y, bool_field, shape, radius):
+    for ax in range(-radius, radius + 1):
+        for ay in range(-radius, radius + 1):
+            if x + ax in range(shape[1]) and y + ay in range(shape[0]) and np.abs(ax) + np.abs(ay) <= radius:
+                bool_field[x + ax][y + ay] = False
 
 
-def do_remove_close_corners_flow(cs_flow, ids, radius):
-    remove_close_corners_flow(cs_flow, ids, radius)
-    return cs_flow[~np.isnan(cs_flow)].reshape(-1, 1, 2), ids[ids != -1].reshape(-1)
-
-
-remove_close_corners_new = numba.jit(nopython=True)(remove_close_corners_new)
+mark_area = numba.jit(nopython=True)(mark_area)
 remove_close_corners_flow = numba.jit(nopython=True)(remove_close_corners_flow)
+remove_close_corners_new = numba.jit(nopython=True)(remove_close_corners_new)
 
 
 def remove_end_corners(cs_flow, ids, _st):
@@ -88,9 +106,10 @@ def add_new_ids(ids, cur_id, cs_new):
 
 def _build_impl(frame_sequence: pims.FramesSequence,
                 builder: _CornerStorageBuilder) -> None:
+
     image_0 = frame_sequence[0]
     corner_size = 11
-    new_corner_per_frame = 300
+    new_corner_per_frame = 500
     corner_threshold = 0.01
 
     cs = cv2.goodFeaturesToTrack(image_0, new_corner_per_frame, corner_threshold, corner_size, blockSize=corner_size)
@@ -104,6 +123,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         np.ones(len(cs)) * corner_size
     )
     builder.set_corners_at_frame(0, corners)
+    bool_field = np.ones((image_0.shape[1], image_0.shape[0]), dtype=bool)
 
     for frame, image_1 in enumerate(frame_sequence[1:], 1):
         cs_flow, _st, _err = cv2.calcOpticalFlowPyrLK(image_0, image_1, cs, None, winSize=(33, 33), maxLevel=2,
@@ -114,15 +134,14 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
         cs_flow, ids = remove_end_corners(cs_flow, ids, _st)
 
-        cs_flow, ids = do_remove_close_corners_flow(cs_flow, ids, radius=corner_size)
+        cs_flow, ids = do_remove_close_corners_flow(bool_field, cs_flow, ids, image_1.shape, radius=corner_size)
 
         cs_new = cv2.goodFeaturesToTrack(image_1, new_corner_per_frame, corner_threshold, corner_size,
                                          blockSize=corner_size)
 
-        cs_new = do_remove_close_corners_new(cs_flow, cs_new, radius=corner_size * 2)
+        cs_new = do_remove_close_corners_new(bool_field, cs_flow, cs_new, image_1.shape, radius=corner_size)
 
         cs = np.concatenate((cs_flow, cs_new))
-
         ids = add_new_ids(ids, cur_id, cs_new)
         corners = FrameCorners(
             ids,
