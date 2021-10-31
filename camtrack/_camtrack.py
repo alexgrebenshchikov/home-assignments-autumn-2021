@@ -286,6 +286,7 @@ class PointCloudBuilder:
         points = points.reshape(-1, 3)
         _, (idx_1, idx_2) = snp.intersect(self.ids.flatten(), ids.flatten(),
                                           indices=True)
+        diff = np.linalg.norm(points[idx_2] - self.points[idx_1], axis=1)
         self.points[idx_1] = points[idx_2]
         self._ids = np.vstack((self.ids, np.delete(ids, idx_2, axis=0)))
         self._points = np.vstack((self.points, np.delete(points, idx_2, axis=0)))
@@ -365,6 +366,7 @@ def calc_point_cloud_colors(pc_builder: PointCloudBuilder,
     # pylint:disable=too-many-locals
 
     point_cloud_points = np.zeros((corner_storage.max_corner_id() + 1, 3))
+
     point_cloud_points[pc_builder.ids.flatten()] = pc_builder.points
 
     color_sums = np.zeros_like(point_cloud_points)
@@ -380,7 +382,6 @@ def calc_point_cloud_colors(pc_builder: PointCloudBuilder,
                 errors = compute_reprojection_errors(points3d, corners.points,
                                                      proj_mat)
                 errors = np.nan_to_num(errors)
-
             consistency_mask = (
                 (errors <= max_reproj_error) &
                 (corners.points[:, 0] >= 0) &

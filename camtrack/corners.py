@@ -101,7 +101,7 @@ def remove_end_corners(cs_flow, ids, _st):
 def add_new_ids(ids, cur_id, cs_new):
     new_ids = np.arange(cur_id, cur_id + len(cs_new))
     cur_id += len(cs_new)
-    return np.concatenate((ids, new_ids))
+    return np.concatenate((ids, new_ids)), cur_id
 
 
 def _build_impl(frame_sequence: pims.FramesSequence,
@@ -142,12 +142,14 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         cs_new = do_remove_close_corners_new(bool_field, cs_flow, cs_new, image_1.shape, radius=corner_size)
 
         cs = np.concatenate((cs_flow, cs_new))
-        ids = add_new_ids(ids, cur_id, cs_new)
+        ids, cur_id = add_new_ids(ids, cur_id, cs_new)
         corners = FrameCorners(
             ids,
             cs,
             np.ones(len(cs)) * corner_size
         )
+        assert(np.unique(ids, axis=0, ).shape[0] == ids.shape[0])
+        #print(cur_id)
 
         builder.set_corners_at_frame(frame, corners)
         image_0 = image_1
