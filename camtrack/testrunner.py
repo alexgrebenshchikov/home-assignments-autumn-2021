@@ -313,7 +313,7 @@ def run_tests(config, output_dir, corners_dir):
         test_dir = path.join(output_dir, test_name)
         _make_dir_if_needed(test_dir, 1)
 
-        grayscale_seq = frameseq.read_grayscale_f32(test_info.rgb)
+        grayscale_seq = frameseq.my_read_grayscale(test_info.rgb)
 
         inf_errors = np.full((len(grayscale_seq),), np.inf)
         all_r_errors.append(inf_errors)

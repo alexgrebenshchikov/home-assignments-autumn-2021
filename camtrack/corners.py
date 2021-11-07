@@ -149,7 +149,6 @@ def _build_impl(frame_sequence: pims.FramesSequence,
             np.ones(len(cs)) * corner_size
         )
         assert(np.unique(ids, axis=0, ).shape[0] == ids.shape[0])
-        #print(cur_id)
 
         builder.set_corners_at_frame(frame, corners)
         image_0 = image_1

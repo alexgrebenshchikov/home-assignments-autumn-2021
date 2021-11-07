@@ -114,7 +114,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     )
 
     pts3d, inl_ids, _ = do_triangulation(corner_storage[known_view_1[0]], corner_storage[known_view_2[0]],
-                                         1.0, 1.0, 0, pose_to_view_mat3x4(known_view_1[1]),
+                                         2.0, 1.0, 0, pose_to_view_mat3x4(known_view_1[1]),
                                          pose_to_view_mat3x4(known_view_2[1]),
                                          intrinsic_mat)
 
@@ -134,11 +134,14 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     inner_mask = np.zeros_like(frame_range, dtype=bool)
 
-    outer_mask = np.ones_like(frame_range, dtype=bool)
-    outer_mask[known_view_1[0]] = False
-    outer_mask[known_view_2[0]] = False
+    left_known = min(known_view_1[0], known_view_2[0])
+    right_known = max(known_view_1[0], known_view_2[0])
+    range_between = np.arange(left_known + 1, right_known)
+    range_before = np.array([], dtype=int) if left_known == 0 else np.arange(left_known - 1, -1, -1)
+    range_after = np.array([], dtype=int) if right_known == frame_count - 1 else np.arange(right_known + 1, frame_count)
+    outer_range = np.concatenate((range_between, range_before, range_after))
 
-    for corners_id_1 in frame_range[outer_mask]:
+    for corners_id_1 in outer_range:
         pts3d_1, inl_ids1, pts2d_1 = get2d_3d_correspondence(point_cloud_builder.points, point_cloud_builder.ids,
                                                              corner_storage[corners_id_1])
         view_mat_1, inl_ids_pnp = do_solve_pnp_ransac(pts3d_1, pts2d_1, intrinsic_mat)
@@ -151,7 +154,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         inl_ids_arr = []
         for corners_id_0 in frame_range[inner_mask]:
             pts3d_3, inl_ids_3, mean_cos = do_triangulation(corner_storage[corners_id_0], corner_storage[corners_id_1],
-                                                            2.0, 5.0, 0, view_mats[corners_id_0],
+                                                            2.0, 2.0, 0, view_mats[corners_id_0],
                                                             view_mat_1, intrinsic_mat)
             angles.append(np.abs(mean_cos))
             pts_3d_arr.append(pts3d_3)
