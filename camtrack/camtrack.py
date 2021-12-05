@@ -14,8 +14,6 @@ from sklearn import linear_model
 from _corners import FrameCorners, StorageImpl
 from corners import CornerStorage
 from data3d import CameraParameters, PointCloud, Pose
-from scipy.spatial.transform import Rotation as R
-from scipy.spatial.transform import Slerp
 import frameseq
 from _camtrack import (
     PointCloudBuilder,
@@ -31,6 +29,15 @@ from _camtrack import (
     Correspondences,
     eye3x4
 )
+
+import sys
+import logging
+from logging import StreamHandler
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = StreamHandler(stream=sys.stdout)
+logger.addHandler(handler)
 
 
 def get2d_3d_correspondence(pts3d, ids, corners):
@@ -117,68 +124,46 @@ def do_triangulation(corners0, corners1, max_error, min_angle, min_depth, view_m
 
 
 def find_best_ini_pair(frame_count, corner_storage, intrinsic_mat):
-    result_arr = []
-    tr_inl_ids_arr = []
+    idx = None
+    result_arr = None
+    for j in np.linspace(0, frame_count, 5, dtype=int, endpoint=False):
+        if idx is not None:
+            break
+        for t in [2, 1.5]:
+            begin = None
+            result_arr = []
+            tr_inl_ids_arr = []
+            for i in range(j, frame_count):
+                if begin is not None and i > begin + 50:
+                    break
+                corrs = build_correspondences(corner_storage[j], corner_storage[i])
 
-    for i in range(0, frame_count):
-        corrs = build_correspondences(corner_storage[0], corner_storage[i])
+                _, hom_mask = cv2.findHomography(corrs.points_1, corrs.points_2, cv2.RANSAC)
 
-        _, fund_mask = cv2.findFundamentalMat(corrs.points_1, corrs.points_2, cv2.RANSAC,
-                                              ransacReprojThreshold=3,
-                                              confidence=0.995, maxIters=2000)
-        _, hom_mask = cv2.findHomography(corrs.points_1, corrs.points_2, cv2.RANSAC)
+                E, es_mask1 = cv2.findEssentialMat(corrs.points_1, corrs.points_2, intrinsic_mat, method=cv2.RANSAC,
+                                                   prob=0.9999, threshold=1.0, maxIters=2000)
 
-        if fund_mask[fund_mask == 1].shape[0] / hom_mask[hom_mask == 1].shape[0] < 2:
-            continue
+                if es_mask1[es_mask1 == 1].shape[0] / hom_mask[hom_mask == 1].shape[0] < t:
+                    continue
 
-        E, es_mask1 = cv2.findEssentialMat(corrs.points_1, corrs.points_2, intrinsic_mat, method=cv2.RANSAC,
-                                           prob=0.9999, threshold=1.0, maxIters=2000)
+                if begin is None:
+                    begin = i
 
-        _, R_ini, t_ini, rec_mask = cv2.recoverPose(E, corrs.points_1, corrs.points_2, intrinsic_mat,
-                                                    mask=es_mask1)
+                _, R_ini, t_ini, rec_mask = cv2.recoverPose(E, corrs.points_1, corrs.points_2, intrinsic_mat,
+                                                            mask=es_mask1)
 
-        view_mat_ini = np.hstack((R_ini, t_ini))
-        pts3d_ini, inl_ids_ini, mean_cos = do_triangulation(corner_storage[0], corner_storage[i],
-                                                            2.0, 5.0, 0, eye3x4(),
-                                                            view_mat_ini,
-                                                            intrinsic_mat)
-        result_arr.append((0, i, view_mat_ini, pts3d_ini, inl_ids_ini))
-        tr_inl_ids_arr.append(inl_ids_ini.shape[0])
-    idx = np.argmax(tr_inl_ids_arr)
+                view_mat_ini = np.hstack((R_ini, t_ini))
+                pts3d_ini, inl_ids_ini, mean_cos = do_triangulation(corner_storage[j], corner_storage[i],
+                                                                    2.0, 5.0, 2.0, eye3x4(),
+                                                                    view_mat_ini,
+                                                                    intrinsic_mat)
+                result_arr.append((j, i, view_mat_ini, pts3d_ini, inl_ids_ini))
+                tr_inl_ids_arr.append(inl_ids_ini.shape[0])
+            if len(tr_inl_ids_arr) == 0:
+                continue
+            idx = np.argmax(tr_inl_ids_arr)
+            break
     return result_arr[idx]
-
-
-def remove_jumps(view_mats):
-    t_vecs = np.array(list(map(lambda mat: mat[:, 3], view_mats)))
-    dists = t_vecs[1:] - t_vecs[:-1]
-    dists = np.array(list(map(lambda vec: np.linalg.norm(vec), dists)))
-
-    mean_dist = dists.mean()
-    cur_jump_begin = None
-    cur_jump_len = 0
-    for i, d in enumerate(dists):
-        if cur_jump_begin is None:
-            if d > mean_dist * 20:
-                cur_jump_begin = i
-                cur_jump_len += 1
-            continue
-
-        cur_jump_len += 1
-
-        if np.linalg.norm(t_vecs[i + 1] - t_vecs[cur_jump_begin]) < mean_dist * cur_jump_len:
-            key_rots = R.from_matrix([view_mats[cur_jump_begin][:, :3], view_mats[i + 1][:, :3]])
-            key_times = [0, 1]
-            slerp = Slerp(key_times, key_rots)
-            times = np.linspace(0, 1, cur_jump_len + 1)[1:-1]
-            interp_rots = slerp(times).as_matrix()
-            interp_t = [view_mats[cur_jump_begin][:, 3] * (1 - t) + view_mats[i + 1][:, 3] * t for t in times]
-            interp_view_mats = [np.hstack((rot.reshape(3, 3), t.reshape(3, 1))) for rot, t
-                                in zip(interp_rots, interp_t)]
-            for vm_ind, j in enumerate(range(cur_jump_begin + 1, i + 1)):
-                view_mats[j] = interp_view_mats[vm_ind]
-            cur_jump_begin = None
-            cur_jump_len = 0
-            continue
 
 
 def track_and_calc_colors(camera_parameters: CameraParameters,
@@ -204,7 +189,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         view_mat_ini_first, view_mat_ini_second = pose_to_view_mat3x4(known_view_1[1]), pose_to_view_mat3x4(
             known_view_2[1])
         pts_3d_ini, inl_ids_ini, _ = do_triangulation(corner_storage[first_ini_frame], corner_storage[second_ini_frame],
-                                                      2.0, 1.0, 0, view_mat_ini_first,
+                                                      2.0, 1.0, 2.0, view_mat_ini_first,
                                                       view_mat_ini_second,
                                                       intrinsic_mat)
 
@@ -236,6 +221,13 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                              corner_storage[corners_id_1])
         view_mat_1, inl_ids_pnp = do_solve_pnp_ransac(pts3d_1, pts2d_1, intrinsic_mat)
 
+        if view_mat_1 is None or inl_ids_pnp is None:
+            view_mats[corners_id_1] = view_mats[corners_id_1 - 1]
+            inl_corners = corner_storage[corners_id_1]
+            inl_corners_storage[corners_id_1] = inl_corners
+            inner_mask[corners_id_1] = True
+            continue
+
         view_mats[corners_id_1] = view_mat_1
 
         inl_ids_2 = inl_ids1[inl_ids_pnp.flatten()]
@@ -244,7 +236,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         inl_ids_arr = []
         for corners_id_0 in frame_range[inner_mask]:
             pts3d_3, inl_ids_3, mean_cos = do_triangulation(corner_storage[corners_id_0], corner_storage[corners_id_1],
-                                                            2.0, 2.0, 0, view_mats[corners_id_0],
+                                                            2.0, 2.0, 2.0, view_mats[corners_id_0],
                                                             view_mat_1, intrinsic_mat)
             angles.append(np.abs(mean_cos))
             pts_3d_arr.append(pts3d_3)
@@ -263,8 +255,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         print(
             f'frame {corners_id_1} : pnp_inliers - {len(inl_ids_pnp)}, triangulated points - {tr_points_num}'
             + f', cloud size - {point_cloud_builder.ids.size}')
-
-    remove_jumps(view_mats)
 
     css = StorageImpl(inl_corners_storage)
 
